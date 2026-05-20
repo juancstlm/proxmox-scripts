@@ -37,7 +37,7 @@ The script will prompt for:
 - **DB host/IP** the API will connect to (no default — your Postgres LXC's address on the Services VLAN)
 - **Path to an existing GitHub deploy key** (SSH private key) on the
   Proxmox host. Leave blank to have the script **generate a fresh ed25519
-  keypair** for you (at `~/.ssh/${HOSTNAME}_github_deploy`), print the
+  keypair** for you (at `~/.ssh/${LXC_HOSTNAME}_github_deploy`), print the
   public half, and pause so you can paste it into the repo's
   Settings → Deploy keys page before continuing. Pass `none` to skip
   deploy-key handling entirely and use HTTPS via `CALAUTOX_REPO_URL`.

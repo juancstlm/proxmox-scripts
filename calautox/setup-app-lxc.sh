@@ -11,7 +11,7 @@
 #
 # Env vars (all optional except where noted):
 #   CTID                 force a specific container ID instead of next-available
-#   HOSTNAME             LXC hostname           (default: calautox-prod)
+#   LXC_HOSTNAME             LXC hostname           (default: calautox-prod)
 #   VLAN_TAG             VLAN id for net0       — prompted if unset
 #   IP_CIDR              static IP in CIDR form (e.g. 10.6.1.10/24) — prompted
 #   GATEWAY              default gateway        — prompted, must reach VLAN
@@ -27,7 +27,7 @@
 #   DEPLOY_KEY_FILE      path on THIS host to an existing GitHub deploy key
 #                        (SSH private key) with read access to the calautox
 #                        repo. If blank (the default), the script generates a
-#                        new ed25519 keypair at ~/.ssh/${HOSTNAME}_github_deploy
+#                        new ed25519 keypair at ~/.ssh/${LXC_HOSTNAME}_github_deploy
 #                        and pauses so you can paste the public half into the
 #                        repo's Settings → Deploy keys page. To use HTTPS
 #                        instead, set CALAUTOX_REPO_URL to an https URL with
@@ -94,7 +94,7 @@ prompt_secret() {
 
 # ---------- 1. collect inputs --------------------------------------------------
 
-HOSTNAME="${HOSTNAME:-}"
+LXC_HOSTNAME="${LXC_HOSTNAME:-}"
 BRIDGE="${BRIDGE:-}"
 STORAGE="${STORAGE:-}"
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
@@ -102,7 +102,7 @@ CORES="${CORES:-}"
 MEMORY="${MEMORY:-}"
 DISK_GB="${DISK_GB:-}"
 
-prompt HOSTNAME "Hostname"                     "calautox-prod"
+prompt LXC_HOSTNAME "Hostname"                     "calautox-prod"
 prompt BRIDGE   "Bridge"                       "vmbr0"
 prompt VLAN_TAG "VLAN tag (e.g. 60 for DMZ)"   ""
 [ -n "${VLAN_TAG:-}" ] || die "VLAN tag is required"
@@ -145,7 +145,7 @@ prompt AUTOX_DB_HOST "DB host/IP the API will connect to" ""
 prompt DEPLOY_KEY_FILE "Path to an existing GitHub deploy key (leave blank to auto-generate; pass 'none' to skip and use HTTPS)" ""
 case "$DEPLOY_KEY_FILE" in
     "")
-        DEPLOY_KEY_FILE="${HOME}/.ssh/${HOSTNAME}_github_deploy"
+        DEPLOY_KEY_FILE="${HOME}/.ssh/${LXC_HOSTNAME}_github_deploy"
         if [ -f "$DEPLOY_KEY_FILE" ]; then
             log "reusing existing deploy key at ${DEPLOY_KEY_FILE}"
         else
@@ -153,7 +153,7 @@ case "$DEPLOY_KEY_FILE" in
             log "generating new ed25519 deploy key at ${DEPLOY_KEY_FILE}"
             install -d -m 0700 "$(dirname "$DEPLOY_KEY_FILE")"
             ssh-keygen -t ed25519 -N "" \
-                -C "calautox-${HOSTNAME}-$(date +%Y%m%d)" \
+                -C "calautox-${LXC_HOSTNAME}-$(date +%Y%m%d)" \
                 -f "$DEPLOY_KEY_FILE" >/dev/null
         fi
 
@@ -206,7 +206,7 @@ log "using CTID ${CTID}"
 
 # ---------- 3. create the LXC -------------------------------------------------
 
-log "creating LXC ${CTID} (${HOSTNAME}) on ${BRIDGE} tag=${VLAN_TAG} ip=${IP_CIDR}"
+log "creating LXC ${CTID} (${LXC_HOSTNAME}) on ${BRIDGE} tag=${VLAN_TAG} ip=${IP_CIDR}"
 
 # net0: name=eth0,bridge=BRIDGE,ip=CIDR,gw=GATEWAY,tag=VLAN
 net0_spec="name=eth0,bridge=${BRIDGE},ip=${IP_CIDR},gw=${GATEWAY},tag=${VLAN_TAG}"
@@ -218,7 +218,7 @@ if [ -n "${SSH_PUBLIC_KEY_FILE:-}" ]; then
 fi
 
 pct create "$CTID" "$TEMPLATE" \
-    --hostname    "$HOSTNAME" \
+    --hostname    "$LXC_HOSTNAME" \
     --cores       "$CORES" \
     --memory      "$MEMORY" \
     --swap        512 \
@@ -301,6 +301,6 @@ pct exec "$CTID" -- env \
 
 log "all done"
 log "  CTID:     ${CTID}"
-log "  hostname: ${HOSTNAME}"
+log "  hostname: ${LXC_HOSTNAME}"
 log "  ip:       ${IP_CIDR} (vlan ${VLAN_TAG}, via ${GATEWAY})"
 log "  shell in: pct enter ${CTID}"
