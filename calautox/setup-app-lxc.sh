@@ -23,7 +23,12 @@
 #   MEMORY               RAM MB                 (default: 2048)
 #   DISK_GB              rootfs size in GB      (default: 8)
 #   LXC_ROOT_PASSWORD    root password inside the LXC — prompted if unset
-#   SSH_PUBLIC_KEY_FILE  path to authorized_keys to install (optional)
+#   SSH_PUBLIC_KEY_FILE  path to authorized_keys to install on root@LXC (optional)
+#   DEPLOY_KEY_FILE      path on THIS host to a GitHub deploy key (SSH private
+#                        key) with read access to the calautox repo —
+#                        prompted if unset. Leave blank to use HTTPS instead
+#                        (in which case set CALAUTOX_REPO_URL to an https URL
+#                        with an embedded token).
 #   AUTOX_DB_HOST        DB host/IP the API will connect to — prompted if unset
 #   AUTOX_DB_PASSWORD    forwarded to provision.sh — prompted if unset
 #   PROVISION_URL        URL to fetch provision.sh from when not running from
@@ -134,6 +139,12 @@ fi
 prompt AUTOX_DB_HOST "DB host/IP the API will connect to" ""
 [ -n "${AUTOX_DB_HOST:-}" ] || die "AUTOX_DB_HOST is required"
 
+prompt DEPLOY_KEY_FILE "Path to GitHub deploy key (SSH private key) on this host — leave blank to use HTTPS" ""
+if [ -n "${DEPLOY_KEY_FILE:-}" ]; then
+    DEPLOY_KEY_FILE="${DEPLOY_KEY_FILE/#\~/$HOME}"
+    [ -r "$DEPLOY_KEY_FILE" ] || die "deploy key not readable: $DEPLOY_KEY_FILE"
+fi
+
 prompt_secret LXC_ROOT_PASSWORD  "Root password for the new LXC"
 [ -n "${LXC_ROOT_PASSWORD:-}" ] || die "LXC root password is required"
 
@@ -225,6 +236,13 @@ fi
 log "pushing provision.sh into LXC ${CTID}"
 pct push "$CTID" "$provision_local" /root/provision.sh --perms 0755
 
+DEPLOY_KEY_PATH=""
+if [ -n "${DEPLOY_KEY_FILE:-}" ]; then
+    DEPLOY_KEY_PATH="/root/.calautox_deploy_key"
+    log "pushing GitHub deploy key into LXC ${CTID}"
+    pct push "$CTID" "$DEPLOY_KEY_FILE" "$DEPLOY_KEY_PATH" --perms 0600
+fi
+
 log "running provision.sh inside LXC ${CTID}"
 # Forward env vars by exporting them in the in-container shell.
 pct exec "$CTID" -- env \
@@ -238,6 +256,7 @@ pct exec "$CTID" -- env \
     CALAUTOX_REPO_REF="${CALAUTOX_REPO_REF:-}" \
     DEPLOY_USER="${DEPLOY_USER:-}" \
     CALAUTOX_HOME="${CALAUTOX_HOME:-}" \
+    DEPLOY_KEY_PATH="${DEPLOY_KEY_PATH}" \
     /root/provision.sh "${PROVISION_FLAGS[@]}"
 
 log "all done"

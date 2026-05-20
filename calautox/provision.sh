@@ -12,10 +12,13 @@
 #   AUTOX_DB_PASSWORD    API DB password
 #
 # Optional env (with defaults):
-#   CALAUTOX_REPO_URL    default: https://github.com/juancstlm/calautox.git
+#   CALAUTOX_REPO_URL    default: git@github.com:juancstlm/calautox.git
 #   CALAUTOX_REPO_REF    default: main
 #   DEPLOY_USER          default: deploy
 #   CALAUTOX_HOME        default: /home/${DEPLOY_USER}/calautox
+#   DEPLOY_KEY_PATH      path inside this container to a GitHub deploy key
+#                        (SSH private key). When set, installed into
+#                        ~${DEPLOY_USER}/.ssh and used for the git clone.
 #   AUTOX_DB_PORT        default: 5432
 #   AUTOX_DB_NAME        default: autox
 #   AUTOX_DB_USER        default: autox_api
@@ -27,7 +30,7 @@
 
 set -euo pipefail
 
-CALAUTOX_REPO_URL="${CALAUTOX_REPO_URL:-https://github.com/juancstlm/calautox.git}"
+CALAUTOX_REPO_URL="${CALAUTOX_REPO_URL:-git@github.com:juancstlm/calautox.git}"
 CALAUTOX_REPO_REF="${CALAUTOX_REPO_REF:-main}"
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
 CALAUTOX_HOME="${CALAUTOX_HOME:-/home/${DEPLOY_USER}/calautox}"
@@ -62,7 +65,7 @@ log "updating apt and installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y --no-install-recommends \
-    ca-certificates curl git gnupg lsb-release sudo
+    ca-certificates curl git gnupg lsb-release sudo openssh-client
 
 # ---------- 2. docker engine + compose plugin ---------------------------------
 
@@ -92,6 +95,39 @@ if ! id "${DEPLOY_USER}" >/dev/null 2>&1; then
     useradd --create-home --shell /bin/bash "${DEPLOY_USER}"
 fi
 usermod -aG docker "${DEPLOY_USER}"
+
+# ---------- 3b. install GitHub deploy key (if provided) -----------------------
+
+DEPLOY_HOME="$(getent passwd "${DEPLOY_USER}" | cut -d: -f6)"
+SSH_DIR="${DEPLOY_HOME}/.ssh"
+KEY_DEST="${SSH_DIR}/calautox_deploy_key"
+
+if [ -n "${DEPLOY_KEY_PATH:-}" ]; then
+    [ -r "${DEPLOY_KEY_PATH}" ] || die "DEPLOY_KEY_PATH not readable: ${DEPLOY_KEY_PATH}"
+    log "installing GitHub deploy key for ${DEPLOY_USER}"
+    install -d -m 0700 -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" "${SSH_DIR}"
+    install -m 0600 -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" \
+        "${DEPLOY_KEY_PATH}" "${KEY_DEST}"
+
+    # Trust GitHub's host key so the first SSH connection doesn't prompt.
+    sudo -u "${DEPLOY_USER}" sh -c \
+        "ssh-keyscan -t ed25519,rsa github.com 2>/dev/null > '${SSH_DIR}/known_hosts'"
+    chown "${DEPLOY_USER}:${DEPLOY_USER}" "${SSH_DIR}/known_hosts"
+    chmod 0600 "${SSH_DIR}/known_hosts"
+
+    cat > "${SSH_DIR}/config" <<EOF
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ${KEY_DEST}
+    IdentitiesOnly yes
+EOF
+    chown "${DEPLOY_USER}:${DEPLOY_USER}" "${SSH_DIR}/config"
+    chmod 0600 "${SSH_DIR}/config"
+
+    # Wipe the staging copy that the host script left in /root.
+    shred -u "${DEPLOY_KEY_PATH}" 2>/dev/null || rm -f "${DEPLOY_KEY_PATH}"
+fi
 
 # ---------- 4. clone or update the repo ---------------------------------------
 

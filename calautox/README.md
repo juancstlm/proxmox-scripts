@@ -35,6 +35,9 @@ The script will prompt for:
 - **Default gateway** — e.g. `10.6.1.1` (no default)
 - **rootfs storage pool**, CPU cores, RAM, disk size (defaults: `local-lvm`, 2 cores, 2048 MB, 8 GB)
 - **DB host/IP** the API will connect to (no default — your Postgres LXC's address on the Services VLAN)
+- **Path to GitHub deploy key** (SSH private key) on the Proxmox host — used
+  to clone the private calautox repo. Leave blank to fall back to HTTPS,
+  in which case set `CALAUTOX_REPO_URL` to an `https://<token>@…` URL.
 - **Root password for the new LXC** (prompted silently)
 - **Password for DB role `autox_api`** (prompted silently, written to `deploy/.env` inside the LXC)
 
@@ -46,6 +49,23 @@ The CTID is chosen automatically via `pvesh get /cluster/nextid`. Pass
 
 If no Debian 12 template is present on the configured storage, the script
 runs `pveam download` to fetch one.
+
+## Creating a GitHub deploy key
+
+On any machine with your repo access:
+
+```sh
+ssh-keygen -t ed25519 -f ~/.ssh/calautox_deploy -C "calautox-app-lxc"
+# add the contents of ~/.ssh/calautox_deploy.pub to
+#   github.com/juancstlm/calautox → Settings → Deploy keys
+#   (read-only is enough — the LXC only needs to clone/pull)
+```
+
+Then copy the **private** key (`~/.ssh/calautox_deploy`) onto the Proxmox
+host (e.g. `scp` it to `/root/.ssh/calautox_deploy` with mode `0600`) and
+give that path to the prompt. The script pushes it into the LXC, installs
+it under `~deploy/.ssh/`, scans GitHub's host key into `known_hosts`, and
+wipes the staging copy.
 
 ## Useful flags
 
