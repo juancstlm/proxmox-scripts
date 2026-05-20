@@ -1,0 +1,72 @@
+# calautox app LXC
+
+Bootstraps the [calautox](https://github.com/juancstlm/calautox) app LXC. The
+LXC reverse-proxies through Caddy to the Go API + React SPA and reaches the
+DB (on a separate Services VLAN) over a firewall pinhole on tcp/5432.
+
+The flow has two scripts:
+
+| Script | Where it runs | What it does |
+| --- | --- | --- |
+| `setup-app-lxc.sh` | Proxmox **host** | Picks the next available CTID, prompts for VLAN tag / static IP / gateway, creates an unprivileged Debian 12 LXC with those network settings, then pushes and runs `provision.sh` inside. |
+| `provision.sh`     | **inside** the LXC | Installs Docker + compose plugin, creates the `deploy` user, clones the repo, writes `deploy/.env`, and runs `docker compose up -d --build`. |
+
+You normally only invoke `setup-app-lxc.sh`. It runs `provision.sh`
+automatically over `pct push` / `pct exec`.
+
+## Usage
+
+From a shell on the Proxmox host, as root:
+
+```sh
+git clone https://github.com/juancstlm/proxmox-scripts.git
+cd proxmox-scripts/calautox
+./setup-app-lxc.sh
+```
+
+The script will prompt for:
+
+- **Hostname** (default `calautox-app`)
+- **Bridge** (default `vmbr0`)
+- **VLAN tag** — e.g. `60` for the DMZ "Public Servers" network (no default)
+- **Static IP in CIDR** — e.g. `10.6.1.10/24` (no default)
+- **Default gateway** — e.g. `10.6.1.1` (no default)
+- **rootfs storage pool**, CPU cores, RAM, disk size (defaults: `local-lvm`, 2 cores, 2048 MB, 8 GB)
+- **DB host/IP** the API will connect to (no default — your Postgres LXC's address on the Services VLAN)
+- **Root password for the new LXC** (prompted silently)
+- **Password for DB role `autox_api`** (prompted silently, written to `deploy/.env` inside the LXC)
+
+Any prompt can be skipped by exporting the corresponding env var first — see
+the header of `setup-app-lxc.sh` for the full list.
+
+The CTID is chosen automatically via `pvesh get /cluster/nextid`. Pass
+`CTID=<id>` to override.
+
+If no Debian 12 template is present on the configured storage, the script
+runs `pveam download` to fetch one.
+
+## Useful flags
+
+- `--no-provision` — create and start the LXC but skip `provision.sh` (handy
+  if you want to inspect / customize before bringing the stack up).
+- `--force-env` — overwrite an existing `deploy/.env` inside the LXC.
+- `--skip-up` — provision everything but don't run `docker compose up`.
+
+## After it finishes
+
+```sh
+pct enter <CTID>            # shell into the LXC
+docker compose -f /home/deploy/calautox/deploy/docker-compose.yml ps
+docker compose -f /home/deploy/calautox/deploy/docker-compose.yml logs api
+```
+
+Caddy listens on the LXC's static IP, port 80. Point your upstream reverse
+proxy or public DNS at it.
+
+## What the script deliberately does NOT do
+
+- Open firewall ports on the Proxmox host or UniFi gateway — pinholes are
+  managed in the UniFi zone-based firewall (DMZ → Services tcp/5432).
+- Install a TLS certificate — Caddy can do this itself once the LXC has a
+  public hostname; until then it serves plain HTTP on :80.
+- Configure unattended-upgrades or other host-level hardening.
