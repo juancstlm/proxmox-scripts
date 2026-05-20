@@ -19,10 +19,12 @@ automatically over `pct push` / `pct exec`.
 From a shell on the Proxmox host, as root:
 
 ```sh
-git clone https://github.com/juancstlm/proxmox-scripts.git
-cd proxmox-scripts/calautox
-./setup-app-lxc.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/juancstlm/proxmox-scripts/main/calautox/setup-app-lxc.sh)"
 ```
+
+(If you'd rather inspect the script first — and you should — clone the repo
+and run `./calautox/setup-app-lxc.sh` from there. The one-liner is provided
+for parity with the community Proxmox scripts.)
 
 The script will prompt for:
 

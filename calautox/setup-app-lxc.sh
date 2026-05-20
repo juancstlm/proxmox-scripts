@@ -26,6 +26,8 @@
 #   SSH_PUBLIC_KEY_FILE  path to authorized_keys to install (optional)
 #   AUTOX_DB_HOST        DB host/IP the API will connect to — prompted if unset
 #   AUTOX_DB_PASSWORD    forwarded to provision.sh — prompted if unset
+#   PROVISION_URL        URL to fetch provision.sh from when not running from
+#                        a git checkout (default: raw.githubusercontent.com…/main)
 #
 # All AUTOX_* / CALAUTOX_* env vars are forwarded to provision.sh.
 #
@@ -202,9 +204,23 @@ fi
 
 # ---------- 5. push provision.sh and run it -----------------------------------
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-provision_local="${script_dir}/provision.sh"
-[ -r "$provision_local" ] || die "provision.sh not found alongside this script: ${provision_local}"
+PROVISION_URL="${PROVISION_URL:-https://raw.githubusercontent.com/juancstlm/proxmox-scripts/main/calautox/provision.sh}"
+
+# Try alongside this script first (git checkout); otherwise download.
+provision_local=""
+self_src="${BASH_SOURCE[0]:-}"
+if [ -n "$self_src" ] && [ -f "$self_src" ]; then
+    candidate="$(cd -- "$(dirname -- "$self_src")" && pwd)/provision.sh"
+    [ -r "$candidate" ] && provision_local="$candidate"
+fi
+if [ -z "$provision_local" ]; then
+    provision_local="$(mktemp -t provision.XXXXXX.sh)"
+    trap 'rm -f "$provision_local"' EXIT
+    log "fetching provision.sh from ${PROVISION_URL}"
+    curl -fsSL "$PROVISION_URL" -o "$provision_local" \
+        || die "failed to fetch provision.sh from ${PROVISION_URL}"
+    chmod +x "$provision_local"
+fi
 
 log "pushing provision.sh into LXC ${CTID}"
 pct push "$CTID" "$provision_local" /root/provision.sh --perms 0755
