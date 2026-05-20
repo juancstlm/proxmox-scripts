@@ -35,9 +35,12 @@ The script will prompt for:
 - **Default gateway** — e.g. `10.6.1.1` (no default)
 - **rootfs storage pool**, CPU cores, RAM, disk size (defaults: `local-lvm`, 2 cores, 2048 MB, 8 GB)
 - **DB host/IP** the API will connect to (no default — your Postgres LXC's address on the Services VLAN)
-- **Path to GitHub deploy key** (SSH private key) on the Proxmox host — used
-  to clone the private calautox repo. Leave blank to fall back to HTTPS,
-  in which case set `CALAUTOX_REPO_URL` to an `https://<token>@…` URL.
+- **Path to an existing GitHub deploy key** (SSH private key) on the
+  Proxmox host. Leave blank to have the script **generate a fresh ed25519
+  keypair** for you (at `~/.ssh/${HOSTNAME}_github_deploy`), print the
+  public half, and pause so you can paste it into the repo's
+  Settings → Deploy keys page before continuing. Pass `none` to skip
+  deploy-key handling entirely and use HTTPS via `CALAUTOX_REPO_URL`.
 - **Root password for the new LXC** (prompted silently)
 - **Password for DB role `autox_api`** (prompted silently, written to `deploy/.env` inside the LXC)
 
@@ -50,22 +53,22 @@ The CTID is chosen automatically via `pvesh get /cluster/nextid`. Pass
 If no Debian 12 template is present on the configured storage, the script
 runs `pveam download` to fetch one.
 
-## Creating a GitHub deploy key
+## GitHub deploy key handling
 
-On any machine with your repo access:
+The default flow generates the deploy key for you:
 
-```sh
-ssh-keygen -t ed25519 -f ~/.ssh/calautox_deploy -C "calautox-prod-lxc"
-# add the contents of ~/.ssh/calautox_deploy.pub to
-#   github.com/juancstlm/calautox → Settings → Deploy keys
-#   (read-only is enough — the LXC only needs to clone/pull)
-```
+1. `ssh-keygen -t ed25519` runs on the Proxmox host, dropping the keypair at
+   `~/.ssh/${HOSTNAME}_github_deploy{,.pub}` (re-used on subsequent runs).
+2. The script prints the **public** half and the direct link to the repo's
+   "Add deploy key" page, then waits for you to press Enter once the key is
+   added to GitHub. Read-only access is sufficient.
+3. The private key is `pct push`ed into the LXC, installed under
+   `~deploy/.ssh/calautox_deploy_key`, and the staging copy is `shred`ded.
+4. GitHub's host key is scanned into the deploy user's `known_hosts` so the
+   first `git clone` doesn't hang on a yes/no prompt.
 
-Then copy the **private** key (`~/.ssh/calautox_deploy`) onto the Proxmox
-host (e.g. `scp` it to `/root/.ssh/calautox_deploy` with mode `0600`) and
-give that path to the prompt. The script pushes it into the LXC, installs
-it under `~deploy/.ssh/`, scans GitHub's host key into `known_hosts`, and
-wipes the staging copy.
+If you already have a deploy key (e.g. one you keep in a password manager),
+point the prompt at its private-key file on the Proxmox host instead.
 
 ## Useful flags
 

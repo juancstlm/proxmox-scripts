@@ -24,11 +24,14 @@
 #   DISK_GB              rootfs size in GB      (default: 8)
 #   LXC_ROOT_PASSWORD    root password inside the LXC — prompted if unset
 #   SSH_PUBLIC_KEY_FILE  path to authorized_keys to install on root@LXC (optional)
-#   DEPLOY_KEY_FILE      path on THIS host to a GitHub deploy key (SSH private
-#                        key) with read access to the calautox repo —
-#                        prompted if unset. Leave blank to use HTTPS instead
-#                        (in which case set CALAUTOX_REPO_URL to an https URL
-#                        with an embedded token).
+#   DEPLOY_KEY_FILE      path on THIS host to an existing GitHub deploy key
+#                        (SSH private key) with read access to the calautox
+#                        repo. If blank (the default), the script generates a
+#                        new ed25519 keypair at ~/.ssh/${HOSTNAME}_github_deploy
+#                        and pauses so you can paste the public half into the
+#                        repo's Settings → Deploy keys page. To use HTTPS
+#                        instead, set CALAUTOX_REPO_URL to an https URL with
+#                        an embedded token and pass DEPLOY_KEY_FILE=none.
 #   AUTOX_DB_HOST        DB host/IP the API will connect to — prompted if unset
 #   AUTOX_DB_PASSWORD    forwarded to provision.sh — prompted if unset
 #   PROVISION_URL        URL to fetch provision.sh from when not running from
@@ -139,11 +142,48 @@ fi
 prompt AUTOX_DB_HOST "DB host/IP the API will connect to" ""
 [ -n "${AUTOX_DB_HOST:-}" ] || die "AUTOX_DB_HOST is required"
 
-prompt DEPLOY_KEY_FILE "Path to GitHub deploy key (SSH private key) on this host — leave blank to use HTTPS" ""
-if [ -n "${DEPLOY_KEY_FILE:-}" ]; then
-    DEPLOY_KEY_FILE="${DEPLOY_KEY_FILE/#\~/$HOME}"
-    [ -r "$DEPLOY_KEY_FILE" ] || die "deploy key not readable: $DEPLOY_KEY_FILE"
-fi
+prompt DEPLOY_KEY_FILE "Path to an existing GitHub deploy key (leave blank to auto-generate; pass 'none' to skip and use HTTPS)" ""
+case "$DEPLOY_KEY_FILE" in
+    "")
+        DEPLOY_KEY_FILE="${HOME}/.ssh/${HOSTNAME}_github_deploy"
+        if [ -f "$DEPLOY_KEY_FILE" ]; then
+            log "reusing existing deploy key at ${DEPLOY_KEY_FILE}"
+        else
+            command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen not found — install openssh-client on the Proxmox host"
+            log "generating new ed25519 deploy key at ${DEPLOY_KEY_FILE}"
+            install -d -m 0700 "$(dirname "$DEPLOY_KEY_FILE")"
+            ssh-keygen -t ed25519 -N "" \
+                -C "calautox-${HOSTNAME}-$(date +%Y%m%d)" \
+                -f "$DEPLOY_KEY_FILE" >/dev/null
+        fi
+
+        # Derive the repo's web URL from the (possibly SSH) clone URL.
+        repo_web="${CALAUTOX_REPO_URL:-git@github.com:juancstlm/calautox.git}"
+        repo_web="${repo_web%.git}"
+        case "$repo_web" in
+            git@github.com:*)       repo_web="https://github.com/${repo_web#git@github.com:}" ;;
+            ssh://git@github.com/*) repo_web="https://github.com/${repo_web#ssh://git@github.com/}" ;;
+        esac
+
+        echo
+        echo "════════════════════════════════════════════════════════════════════════"
+        echo "  Add this PUBLIC key to GitHub as a deploy key (read-only is enough):"
+        echo "    ${repo_web}/settings/keys/new"
+        echo
+        sed 's/^/    /' "${DEPLOY_KEY_FILE}.pub"
+        echo "════════════════════════════════════════════════════════════════════════"
+        echo
+        read -rp "  Press Enter once the deploy key has been added to GitHub… " _
+        ;;
+    none)
+        log "DEPLOY_KEY_FILE=none — skipping deploy key, expecting CALAUTOX_REPO_URL to authenticate itself"
+        DEPLOY_KEY_FILE=""
+        ;;
+    *)
+        DEPLOY_KEY_FILE="${DEPLOY_KEY_FILE/#\~/$HOME}"
+        [ -r "$DEPLOY_KEY_FILE" ] || die "deploy key not readable: $DEPLOY_KEY_FILE"
+        ;;
+esac
 
 prompt_secret LXC_ROOT_PASSWORD  "Root password for the new LXC"
 [ -n "${LXC_ROOT_PASSWORD:-}" ] || die "LXC root password is required"
