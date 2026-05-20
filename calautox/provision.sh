@@ -172,14 +172,14 @@ fi
 if [ "${SKIP_UP}" -eq 1 ]; then
     log "--skip-up set; not running docker compose"
     log "to start the stack manually:"
-    log "  sudo -u ${DEPLOY_USER} -- bash -lc 'cd ${CALAUTOX_HOME}/deploy && docker compose up -d --build'"
+    log "  sudo -u ${DEPLOY_USER} -- bash -lc 'cd ${CALAUTOX_HOME}/deploy && docker compose --profile prod up -d --build'"
     exit 0
 fi
 
-log "building and starting the compose stack"
+log "building and starting the compose stack (prod profile = includes cloudflared)"
 sudo -u "${DEPLOY_USER}" -- bash -lc \
-    "cd '${CALAUTOX_HOME}/deploy' && docker compose up -d --build"
+    "cd '${CALAUTOX_HOME}/deploy' && docker compose --profile prod up -d --build"
 
 log "done — container status:"
 sudo -u "${DEPLOY_USER}" -- bash -lc \
-    "cd '${CALAUTOX_HOME}/deploy' && docker compose ps"
+    "cd '${CALAUTOX_HOME}/deploy' && docker compose --profile prod ps"
