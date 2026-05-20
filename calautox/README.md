@@ -28,7 +28,7 @@ for parity with the community Proxmox scripts.)
 
 The script will prompt for:
 
-- **Hostname** (default `calautox-app`)
+- **Hostname** (default `calautox-prod`)
 - **Bridge** (default `vmbr0`)
 - **VLAN tag** — e.g. `60` for the DMZ "Public Servers" network (no default)
 - **Static IP in CIDR** — e.g. `10.6.1.10/24` (no default)
@@ -55,7 +55,7 @@ runs `pveam download` to fetch one.
 On any machine with your repo access:
 
 ```sh
-ssh-keygen -t ed25519 -f ~/.ssh/calautox_deploy -C "calautox-app-lxc"
+ssh-keygen -t ed25519 -f ~/.ssh/calautox_deploy -C "calautox-prod-lxc"
 # add the contents of ~/.ssh/calautox_deploy.pub to
 #   github.com/juancstlm/calautox → Settings → Deploy keys
 #   (read-only is enough — the LXC only needs to clone/pull)

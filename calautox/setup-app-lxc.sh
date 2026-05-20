@@ -11,7 +11,7 @@
 #
 # Env vars (all optional except where noted):
 #   CTID                 force a specific container ID instead of next-available
-#   HOSTNAME             LXC hostname           (default: calautox-app)
+#   HOSTNAME             LXC hostname           (default: calautox-prod)
 #   VLAN_TAG             VLAN id for net0       — prompted if unset
 #   IP_CIDR              static IP in CIDR form (e.g. 10.6.1.10/24) — prompted
 #   GATEWAY              default gateway        — prompted, must reach VLAN
@@ -99,7 +99,7 @@ CORES="${CORES:-}"
 MEMORY="${MEMORY:-}"
 DISK_GB="${DISK_GB:-}"
 
-prompt HOSTNAME "Hostname"                     "calautox-app"
+prompt HOSTNAME "Hostname"                     "calautox-prod"
 prompt BRIDGE   "Bridge"                       "vmbr0"
 prompt VLAN_TAG "VLAN tag (e.g. 60 for DMZ)"   ""
 [ -n "${VLAN_TAG:-}" ] || die "VLAN tag is required"
