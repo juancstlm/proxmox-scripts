@@ -9,8 +9,10 @@ documented).
 
 ```
 proxmox-scripts/
-└── calautox/
-    └── setup-app-lxc.sh    # bootstraps the calautox app LXC (DMZ / Public Servers)
+├── calautox/
+│   └── setup-app-lxc.sh    # bootstraps the calautox app LXC (DMZ / Public Servers)
+└── arr-stack/
+    └── setup-arr-vm.sh     # bootstraps the arr-stack docker VM (Apps VLAN)
 ```
 
 ## Conventions
