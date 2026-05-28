@@ -21,7 +21,9 @@
 #   GATEWAY              default gateway        (default: 10.8.1.1)
 #   DNS_SERVERS          space-sep list         (default: "192.168.0.124 192.168.0.23")
 #   BRIDGE               Proxmox bridge         (default: vmbr0)
-#   STORAGE              rootfs storage pool    (default: local-lvm)
+#   STORAGE              rootfs storage pool — prompted if unset, with a list
+#                        of available image-capable pools and a smart default
+#                        (prefers `nvme`, then first non-`local`)
 #   TEMPLATE_STORAGE     where templates live   (default: local)
 #   CLOUD_IMG_PATH       path on host to debian-12 genericcloud qcow2
 #                        (default: /var/lib/vz/template/iso/debian-12-genericcloud-amd64.qcow2)
@@ -100,8 +102,28 @@ prompt_secret() {
 
 VM_HOSTNAME="${VM_HOSTNAME:-arr-stack}"
 BRIDGE="${BRIDGE:-vmbr0}"
-STORAGE="${STORAGE:-local-lvm}"
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
+
+# Storage pool for the VM disk. List active image-capable pools and let the
+# user pick; default to `nvme` if it exists, else the first non-`local` pool.
+available_storage="$(pvesm status -content images 2>/dev/null | awk 'NR>1 && $3=="active" {print $1}')"
+[ -n "$available_storage" ] \
+    || die "no active image-capable storage pools found (pvesm status -content images returned nothing)"
+
+if [ -z "${STORAGE:-}" ]; then
+    default_storage="$(printf '%s\n' $available_storage | grep -m1 '^nvme$' || true)"
+    [ -n "$default_storage" ] \
+        || default_storage="$(printf '%s\n' $available_storage | grep -m1 -v '^local$' | head -1 || true)"
+    [ -n "$default_storage" ] \
+        || default_storage="$(printf '%s\n' $available_storage | head -1)"
+
+    echo "Available storage pools for VM disks:"
+    printf '  - %s\n' $available_storage
+    prompt STORAGE "Storage pool for VM disk" "$default_storage"
+fi
+
+printf '%s\n' $available_storage | grep -qxF "$STORAGE" \
+    || die "storage '$STORAGE' is not an active image-capable pool. Available: $(echo $available_storage | tr '\n' ' ')"
 CORES="${CORES:-3}"
 MEMORY="${MEMORY:-6144}"
 DISK_GB="${DISK_GB:-32}"
