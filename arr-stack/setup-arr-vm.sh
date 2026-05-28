@@ -2,10 +2,10 @@
 # setup-arr-vm.sh
 # ---------------
 # Runs on the PROXMOX HOST. Creates a Debian 12 cloud-image VM for the
-# arr-stack docker compose. Configures cloud-init with a static IP on the
-# Apps VLAN, prints the VM's MAC for the UniFi per-MAC override, then SSHes
-# in and runs provision.sh to install Docker, mount the UNAS share, and
-# bring up the compose stack.
+# arr-stack docker compose. Tags net0 with the Apps VLAN (81 by default),
+# configures cloud-init with a static IP, then SSHes in and runs
+# provision.sh to install Docker, mount the UNAS share, and bring up the
+# compose stack.
 #
 # Why a VM (not LXC): the qBittorrent traffic tunnels through gluetun, which
 # needs /dev/net/tun and CAP_NET_ADMIN. A VM gets that for free.
@@ -21,6 +21,8 @@
 #   GATEWAY              default gateway        (default: 10.8.1.1)
 #   DNS_SERVERS          space-sep list         (default: "192.168.0.124 192.168.0.23")
 #   BRIDGE               Proxmox bridge         (default: vmbr0)
+#   VLAN_TAG             802.1Q VLAN tag for net0 — the Apps VLAN ID
+#                        (default: 81)
 #   STORAGE              rootfs storage pool — prompted if unset, with a list
 #                        of available image-capable pools and a smart default
 #                        (prefers `nvme`, then first non-`local`)
@@ -102,6 +104,7 @@ prompt_secret() {
 
 VM_HOSTNAME="${VM_HOSTNAME:-arr-stack}"
 BRIDGE="${BRIDGE:-vmbr0}"
+VLAN_TAG="${VLAN_TAG:-81}"
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
 
 # Storage pool for the VM disk. List active image-capable pools and let the
@@ -212,7 +215,7 @@ qm create "$VMID" \
     --name        "$VM_HOSTNAME" \
     --cores       "$CORES" \
     --memory      "$MEMORY" \
-    --net0        "virtio,bridge=${BRIDGE}" \
+    --net0        "virtio,bridge=${BRIDGE},tag=${VLAN_TAG}" \
     --serial0     socket \
     --agent       1 \
     --ostype      l26 \
@@ -253,27 +256,29 @@ VM_IP="${IP_CIDR%/*}"
 cat <<EOF
 
 ════════════════════════════════════════════════════════════════════════
-  Pause here. Before the VM starts, go to UniFi and:
+  Pause here. Verify in UniFi before starting the VM:
 
-    1.  Settings → Profiles → Manual Port Configuration (or Clients) →
-        add a Network override for this MAC address:
+    1.  CGF Port 1 (the port carrying PVE's nic0 trunk) must allow
+        VLAN ${VLAN_TAG} in its port profile / allowed-networks list.
+        The VM tags its own frames at VLAN ${VLAN_TAG}; if the port
+        strips that tag, you'll see Default-VLAN behavior again.
 
+    2.  Optional — pre-register the client for visibility:
+        Clients → Add Client (or wait for it to appear after first boot)
            MAC:      ${VM_MAC}
-           Network:  Apps  (10.8.1.0/24, VLAN 81)
            Fixed IP: ${VM_IP}
 
-        This is what actually puts the VM onto the Apps VLAN — without
-        it, the VM will boot with IP ${VM_IP} but won't be able to reach
-        ${GATEWAY}.
+        Tagged-at-PVE means UniFi WILL put it on the Apps network
+        without any Virtual Network Override toggle.
 
-    2.  Confirm the firewall rules from Arr Stack.md are in place:
+    3.  Confirm the firewall rules from Arr Stack.md are in place:
           Apps → AdGuard, pihole, UNAS SMB, Jellyfin (CT 105)
           + the Apps zone-matrix defaults.
 ════════════════════════════════════════════════════════════════════════
 
 EOF
 
-read -rp "  Press Enter once the UniFi override + firewall rules are set… " _
+read -rp "  Press Enter when UniFi is ready… " _
 
 # ---------- 6. start the VM and wait for SSH ----------------------------------
 
@@ -301,10 +306,12 @@ fi
 
 # ---------- 7. push provision.sh + compose.yaml, run it -----------------------
 
-# Resolve sibling files (provision.sh + compose.yaml) from this script's
-# directory. If running via curl-pipe, fall back to fetching from the repo.
+# Resolve sibling files (provision.sh + compose.yaml + qbit-port-sync.sh)
+# from this script's directory. If running via curl-pipe, fall back to
+# fetching from the repo.
 PROVISION_URL="${PROVISION_URL:-https://raw.githubusercontent.com/juancstlm/proxmox-scripts/main/arr-stack/provision.sh}"
 COMPOSE_URL="${COMPOSE_URL:-https://raw.githubusercontent.com/juancstlm/proxmox-scripts/main/arr-stack/compose.yaml}"
+PORT_SYNC_URL="${PORT_SYNC_URL:-https://raw.githubusercontent.com/juancstlm/proxmox-scripts/main/arr-stack/qbit-port-sync.sh}"
 
 self_dir=""
 self_src="${BASH_SOURCE[0]:-}"
@@ -314,7 +321,12 @@ fi
 
 provision_local=""
 compose_local=""
-cleanup_tmp() { [ -n "${provision_tmp:-}" ] && rm -f "$provision_tmp"; [ -n "${compose_tmp:-}" ] && rm -f "$compose_tmp"; }
+port_sync_local=""
+cleanup_tmp() {
+    [ -n "${provision_tmp:-}" ] && rm -f "$provision_tmp"
+    [ -n "${compose_tmp:-}" ] && rm -f "$compose_tmp"
+    [ -n "${port_sync_tmp:-}" ] && rm -f "$port_sync_tmp"
+}
 trap cleanup_tmp EXIT
 
 if [ -n "$self_dir" ] && [ -r "${self_dir}/provision.sh" ]; then
@@ -337,18 +349,32 @@ else
     compose_local="$compose_tmp"
 fi
 
-log "scp'ing provision.sh + compose.yaml to ${CI_USER}@${VM_IP}:/tmp/"
-scp "${SSH_OPTS[@]}" \
-    "$provision_local" "$compose_local" \
-    "${CI_USER}@${VM_IP}:/tmp/"
+if [ -n "$self_dir" ] && [ -r "${self_dir}/qbit-port-sync.sh" ]; then
+    port_sync_local="${self_dir}/qbit-port-sync.sh"
+else
+    port_sync_tmp="$(mktemp -t arr-port-sync.XXXXXX.sh)"
+    log "fetching qbit-port-sync.sh from ${PORT_SYNC_URL}"
+    curl -fsSL "$PORT_SYNC_URL" -o "$port_sync_tmp" \
+        || die "failed to fetch qbit-port-sync.sh"
+    port_sync_local="$port_sync_tmp"
+fi
+
+log "scp'ing provision.sh + compose.yaml + qbit-port-sync.sh to ${CI_USER}@${VM_IP}:/tmp/"
+# Use explicit destination filenames so the remote side gets predictable
+# paths regardless of whether the local source was a sibling file or a
+# mktemp tempfile (which has a random basename).
+scp "${SSH_OPTS[@]}" "$provision_local" "${CI_USER}@${VM_IP}:/tmp/provision.sh"
+scp "${SSH_OPTS[@]}" "$compose_local"   "${CI_USER}@${VM_IP}:/tmp/compose.yaml"
+scp "${SSH_OPTS[@]}" "$port_sync_local" "${CI_USER}@${VM_IP}:/tmp/qbit-port-sync.sh"
 
 log "running provision.sh as root inside the VM"
 # Forward env vars over SSH. Secrets are passed via env, not on the command
 # line, so they don't appear in the remote `ps`.
 ssh "${SSH_OPTS[@]}" "${CI_USER}@${VM_IP}" "\
-    sudo install -m 0644 /tmp/compose.yaml /root/compose.yaml && \
-    sudo install -m 0755 /tmp/provision.sh /root/provision.sh && \
-    rm -f /tmp/provision.sh /tmp/compose.yaml && \
+    sudo install -m 0644 /tmp/compose.yaml         /root/compose.yaml && \
+    sudo install -m 0755 /tmp/provision.sh         /root/provision.sh && \
+    sudo install -m 0755 /tmp/qbit-port-sync.sh    /root/qbit-port-sync.sh && \
+    rm -f /tmp/provision.sh /tmp/compose.yaml /tmp/qbit-port-sync.sh && \
     sudo env \
         WG_PRIVATE_KEY=$(printf %q "$WG_PRIVATE_KEY") \
         WG_ADDRESSES=$(printf %q "$WG_ADDRESSES") \

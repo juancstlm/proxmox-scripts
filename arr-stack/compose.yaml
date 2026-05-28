@@ -14,6 +14,7 @@ services:
       - SERVER_COUNTRIES=${VPN_COUNTRIES}
       - VPN_PORT_FORWARDING=on
       - VPN_PORT_FORWARDING_PROVIDER=protonvpn
+      - VPN_PORT_FORWARDING_STATUS_FILE=/gluetun/forwarded_port
       - PORT_FORWARD_ONLY=on
       - FIREWALL_OUTBOUND_SUBNETS=${LAN}
       - TZ=${TZ}
@@ -39,6 +40,23 @@ services:
     volumes:
       - ${CONFIG_PATH}/qbittorrent/:/config
       - ${MEDIA_PATH}:/media
+    restart: unless-stopped
+
+  qbit-port-sync:
+    image: alpine:3.20
+    container_name: qbit-port-sync
+    depends_on:
+      gluetun:
+        condition: service_started
+      qbittorrent:
+        condition: service_started
+    environment:
+      - TZ=${TZ}
+      - SYNC_INTERVAL=120
+    volumes:
+      - ./qbit-port-sync.sh:/usr/local/bin/qbit-port-sync.sh:ro
+      - ${CONFIG_PATH}/gluetun:/gluetun:ro
+    entrypoint: ["sh", "/usr/local/bin/qbit-port-sync.sh"]
     restart: unless-stopped
 
   prowlarr:

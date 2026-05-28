@@ -16,7 +16,8 @@
 #
 # Optional env (with defaults):
 #   STACK_HOME           default: /opt/arr-stack
-#   STACK_USER           default: arr
+#   STACK_USER           default: whoever owns ${STACK_UID} (typically the
+#                        cloud-init user `juanc`); else `arr`
 #   STACK_UID            default: 1000
 #   STACK_GID            default: 1000
 #   TZ                   default: America/Los_Angeles
@@ -33,9 +34,21 @@
 set -euo pipefail
 
 STACK_HOME="${STACK_HOME:-/opt/arr-stack}"
-STACK_USER="${STACK_USER:-arr}"
 STACK_UID="${STACK_UID:-1000}"
 STACK_GID="${STACK_GID:-1000}"
+
+# If a user already owns the target UID (typical when cloud-init created
+# the default account at UID 1000), reuse them as the stack user instead
+# of trying to add a colliding `arr`. The compose file hard-codes
+# PUID=1000/PGID=1000, so whoever owns 1000 is the right account.
+if [ -z "${STACK_USER:-}" ]; then
+    existing_user_at_uid="$(getent passwd "${STACK_UID}" 2>/dev/null | cut -d: -f1 || true)"
+    if [ -n "$existing_user_at_uid" ]; then
+        STACK_USER="$existing_user_at_uid"
+    else
+        STACK_USER="arr"
+    fi
+fi
 TZ="${TZ:-America/Los_Angeles}"
 LAN="${LAN:-10.8.1.0/24,192.168.0.0/24}"
 VPN_COUNTRIES="${VPN_COUNTRIES:-United States}"
@@ -97,12 +110,15 @@ fi
 # ---------- 3. stack user -----------------------------------------------------
 
 if ! getent group "${STACK_GID}" >/dev/null 2>&1; then
+    log "creating group ${STACK_USER} (gid ${STACK_GID})"
     groupadd --gid "${STACK_GID}" "${STACK_USER}"
 fi
 if ! id "${STACK_USER}" >/dev/null 2>&1; then
     log "creating user ${STACK_USER} (${STACK_UID}:${STACK_GID})"
     useradd --uid "${STACK_UID}" --gid "${STACK_GID}" \
             --create-home --shell /bin/bash "${STACK_USER}"
+else
+    log "reusing existing user ${STACK_USER} ($(id "${STACK_USER}"))"
 fi
 usermod -aG docker "${STACK_USER}"
 
@@ -153,11 +169,12 @@ for svc in gluetun prowlarr radarr sonarr seerr qbittorrent qui profilarr; do
     install -d -o "${STACK_USER}" -g "${STACK_USER}" "${STACK_HOME}/config/${svc}"
 done
 
-# ---------- 6. drop compose.yaml ----------------------------------------------
+# ---------- 6. drop compose.yaml + bind-mounted scripts -----------------------
 
-# The host setup script SCPs compose.yaml into /root/compose.yaml before
-# running this provision script. Move it into ${STACK_HOME} owned by the
-# stack user.
+# The host setup script SCPs compose.yaml + qbit-port-sync.sh into /root/
+# before running this provision script. Move them into ${STACK_HOME} owned
+# by the stack user. compose.yaml's bind mount `./qbit-port-sync.sh:…`
+# resolves relative to ${STACK_HOME}, so the script MUST sit next to it.
 if [ -f /root/compose.yaml ]; then
     log "installing compose.yaml at ${STACK_HOME}/compose.yaml"
     install -m 0644 -o "${STACK_USER}" -g "${STACK_USER}" \
@@ -167,6 +184,17 @@ elif [ ! -f "${STACK_HOME}/compose.yaml" ]; then
     die "compose.yaml missing — expected at /root/compose.yaml or ${STACK_HOME}/compose.yaml"
 else
     log "compose.yaml already present at ${STACK_HOME}/compose.yaml"
+fi
+
+if [ -f /root/qbit-port-sync.sh ]; then
+    log "installing qbit-port-sync.sh at ${STACK_HOME}/qbit-port-sync.sh"
+    install -m 0755 -o "${STACK_USER}" -g "${STACK_USER}" \
+        /root/qbit-port-sync.sh "${STACK_HOME}/qbit-port-sync.sh"
+    rm -f /root/qbit-port-sync.sh
+elif [ ! -f "${STACK_HOME}/qbit-port-sync.sh" ]; then
+    die "qbit-port-sync.sh missing — expected at /root/qbit-port-sync.sh or ${STACK_HOME}/qbit-port-sync.sh"
+else
+    log "qbit-port-sync.sh already present at ${STACK_HOME}/qbit-port-sync.sh"
 fi
 
 # ---------- 7. write .env -----------------------------------------------------
@@ -211,16 +239,25 @@ log "starting gluetun first and waiting for the tunnel"
 sudo -u "${STACK_USER}" -- bash -lc \
     "cd '${STACK_HOME}' && docker compose up -d gluetun"
 
-# Wait up to 60s for gluetun to come up. Don't fail the whole script if the
-# tunnel hasn't established yet — Proton may still be negotiating.
-for _ in $(seq 1 30); do
-    if sudo -u "${STACK_USER}" -- docker logs gluetun 2>&1 \
-        | grep -q "VPN is up"; then
-        log "gluetun: VPN is up"
-        break
-    fi
-    sleep 2
+# Wait up to ~90s for gluetun to report healthy. Use docker's healthcheck
+# rather than log-grepping because gluetun's log strings change between
+# releases; the healthcheck is the stable signal that the tunnel works.
+for _ in $(seq 1 45); do
+    health="$(docker inspect -f '{{.State.Health.Status}}' gluetun 2>/dev/null || true)"
+    case "$health" in
+        healthy)   log "gluetun: container healthy"; break ;;
+        unhealthy) log "gluetun: container unhealthy — continuing, inspect with 'docker logs gluetun'"; break ;;
+        *)         sleep 2 ;;
+    esac
 done
+
+# Surface the ProtonVPN NAT-PMP forwarded port. This is what qBittorrent
+# needs in Tools → Options → Connection → Port used for incoming connections.
+fp_line="$(docker logs gluetun 2>&1 | grep -E '\[port forwarding\] port forwarded is' | tail -1 || true)"
+if [ -n "$fp_line" ]; then
+    fp_port="$(printf '%s\n' "$fp_line" | grep -oE '[0-9]+$' || true)"
+    [ -n "$fp_port" ] && log "gluetun: forwarded port = ${fp_port} (paste into qBittorrent → Connection → Port)"
+fi
 
 log "starting the rest of the stack"
 sudo -u "${STACK_USER}" -- bash -lc \
