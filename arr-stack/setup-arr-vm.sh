@@ -210,13 +210,10 @@ log "creating VM ${VMID} (${VM_HOSTNAME}) on ${BRIDGE}, ip=${IP_CIDR} gw=${GATEW
 
 qm create "$VMID" \
     --name        "$VM_HOSTNAME" \
-    --machine     q35 \
-    --cpu         host \
     --cores       "$CORES" \
     --memory      "$MEMORY" \
     --net0        "virtio,bridge=${BRIDGE}" \
     --serial0     socket \
-    --vga         serial0 \
     --agent       1 \
     --ostype      l26 \
     --onboot      1
