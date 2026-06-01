@@ -165,7 +165,7 @@ done
 log "creating ${STACK_HOME} layout"
 install -d -o "${STACK_USER}" -g "${STACK_USER}" "${STACK_HOME}"
 install -d -o "${STACK_USER}" -g "${STACK_USER}" "${STACK_HOME}/config"
-for svc in gluetun prowlarr radarr sonarr seerr qbittorrent qui profilarr; do
+for svc in gluetun prowlarr radarr sonarr bazarr seerr qbittorrent qui profilarr; do
     install -d -o "${STACK_USER}" -g "${STACK_USER}" "${STACK_HOME}/config/${svc}"
 done
 

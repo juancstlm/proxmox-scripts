@@ -1,7 +1,7 @@
 # arr-stack VM
 
 Bootstraps a Debian 12 cloud-image **VM** (not LXC) on Proxmox that hosts
-the arr-stack docker compose: prowlarr, radarr, sonarr, seerr,
+the arr-stack docker compose: prowlarr, radarr, sonarr, bazarr, seerr,
 qbittorrent-behind-gluetun-ProtonVPN, qui, profilarr, flaresolverr,
 watchtower, dozzle.
 
@@ -103,7 +103,7 @@ run. Paste it into qBittorrent → Tools → Options → Connection → Port
 used for incoming connections, or wire up `gluetun-qbittorrent-port-manager`
 as a sidecar (see Arr Stack.md).
 
-Then in caddy (CT 113), add the eight `*.longdog.racing` reverse-proxy
+Then in caddy (CT 113), add the nine `*.longdog.racing` reverse-proxy
 entries listed at the bottom of `Topology.md` / `Arr Stack.md`.
 
 ## What the script deliberately does NOT do
